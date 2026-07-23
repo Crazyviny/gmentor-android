@@ -155,12 +155,22 @@ class FileResponseCache(
         }
     }
 
-    private fun cachePath(url: String): String =
-        url.toHttpUrlOrNull()
-            ?.encodedPath
-            ?.trimStart('/')
-            ?.ifEmpty { "/" }
-            ?: url.substringBefore('?').trimStart('/').ifEmpty { "/" }
+    private fun cachePath(url: String): String {
+        val httpUrl = url.toHttpUrlOrNull()
+        if (httpUrl != null) {
+            val path = httpUrl.encodedPath.trimStart('/').ifEmpty { "/" }
+            val query = httpUrl.encodedQuery
+            return if (ignoresQuery(path) || query == null) path else "$path?$query"
+        }
+
+        val value = url.substringBefore('#').trimStart('/')
+        val path = value.substringBefore('?').ifEmpty { "/" }
+        val query = value.substringAfter('?', missingDelimiterValue = "")
+        return if (ignoresQuery(path) || query.isEmpty()) path else "$path?$query"
+    }
+
+    private fun ignoresQuery(path: String): Boolean =
+        path == "chars" || path.startsWith("chars/")
 
     private fun findFiles(path: String): Pair<File, File>? {
         val canonicalKey = key(path)
