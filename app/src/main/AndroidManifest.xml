@@ -4,7 +4,9 @@
 
     <application
         android:allowBackup="false"
+        android:icon="@drawable/gmentor_logo"
         android:label="@string/app_name"
+        android:roundIcon="@drawable/gmentor_logo"
         android:supportsRtl="true"
         android:theme="@style/Theme.OfflineWebView"
         android:usesCleartextTraffic="false">
@@ -18,4 +20,3 @@
         </activity>
     </application>
 </manifest>
-

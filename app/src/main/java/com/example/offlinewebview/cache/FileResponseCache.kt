@@ -1,6 +1,7 @@
 package com.example.offlinewebview.cache
 
 import okhttp3.Response
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.File
 import java.security.MessageDigest
 import java.util.Properties
@@ -15,10 +16,7 @@ class FileResponseCache(
 
     @Synchronized
     fun get(url: String): CachedResponse? {
-        val key = key(url)
-        val body = directory.resolve("$key.body")
-        val meta = directory.resolve("$key.properties")
-        if (!body.isFile || !meta.isFile) return null
+        val (body, meta) = findFiles(cachePath(url)) ?: return null
 
         return runCatching {
             val properties = Properties().apply {
@@ -45,7 +43,8 @@ class FileResponseCache(
     @Synchronized
     fun put(url: String, response: Response, bodyBytes: ByteArray): CachedResponse? {
         if (bodyBytes.size > maxBytes) return null
-        val key = key(url)
+        val path = cachePath(url)
+        val key = key(path)
         val body = directory.resolve("$key.body")
         val meta = directory.resolve("$key.properties")
         val temporaryBody = directory.resolve("$key.body.tmp")
@@ -55,6 +54,7 @@ class FileResponseCache(
         return runCatching {
             temporaryBody.outputStream().buffered().use { it.write(bodyBytes) }
             val properties = Properties().apply {
+                setProperty("cachePath", path)
                 setProperty("mimeType", mediaType?.let { "${it.type}/${it.subtype}" } ?: "application/octet-stream")
                 setProperty("charset", mediaType?.charset()?.name() ?: "UTF-8")
                 setProperty("statusCode", response.code.toString())
@@ -80,11 +80,65 @@ class FileResponseCache(
     }
 
     @Synchronized
+    fun putXml(path: String, xml: String): CachedResponse? {
+        val normalizedPath = cachePath(path)
+        val key = key(normalizedPath)
+        val body = directory.resolve("$key.body")
+        val meta = directory.resolve("$key.properties")
+        val temporaryBody = directory.resolve("$key.body.tmp")
+        val temporaryMeta = directory.resolve("$key.properties.tmp")
+
+        return runCatching {
+            temporaryBody.outputStream().buffered().use {
+                it.write(xml.toByteArray(Charsets.UTF_8))
+            }
+            val properties = Properties().apply {
+                setProperty("cachePath", normalizedPath)
+                setProperty("mimeType", "application/xml")
+                setProperty("charset", "UTF-8")
+                setProperty("statusCode", "200")
+                setProperty("reasonPhrase", "OK")
+                setProperty("${HEADER_PREFIX}Content-Type", "application/xml; charset=UTF-8")
+            }
+            temporaryMeta.outputStream().buffered().use {
+                properties.store(it, null)
+            }
+            temporaryBody.copyTo(body, overwrite = true)
+            temporaryMeta.copyTo(meta, overwrite = true)
+            temporaryBody.delete()
+            temporaryMeta.delete()
+            trim()
+            get(normalizedPath)
+        }.getOrNull()
+    }
+
+    @Synchronized
+    fun entries(): List<CacheEntry> =
+        directory.listFiles { file -> file.extension == "body" }
+            .orEmpty()
+            .map { body ->
+                val meta = directory.resolve("${body.nameWithoutExtension}.properties")
+                val path = runCatching {
+                    Properties().apply {
+                        meta.inputStream().buffered().use(::load)
+                    }.let {
+                        it.getProperty("cachePath")
+                            ?: it.getProperty("url")?.let(::cachePath)
+                    }
+                }.getOrNull()
+                CacheEntry(
+                    path = path ?: "[старый кэш] ${body.nameWithoutExtension}",
+                    sizeBytes = body.length()
+                )
+            }
+            .sortedBy(CacheEntry::path)
+
+    @Synchronized
     fun touch(url: String) {
         val timestamp = System.currentTimeMillis()
-        val key = key(url)
-        directory.resolve("$key.body").setLastModified(timestamp)
-        directory.resolve("$key.properties").setLastModified(timestamp)
+        val (body, meta) = findFiles(cachePath(url)) ?: return
+        body.setLastModified(timestamp)
+        meta.setLastModified(timestamp)
     }
 
     private fun trim() {
@@ -101,8 +155,39 @@ class FileResponseCache(
         }
     }
 
-    private fun key(url: String): String = MessageDigest.getInstance("SHA-256")
-        .digest(url.toByteArray())
+    private fun cachePath(url: String): String =
+        url.toHttpUrlOrNull()
+            ?.encodedPath
+            ?.trimStart('/')
+            ?.ifEmpty { "/" }
+            ?: url.substringBefore('?').trimStart('/').ifEmpty { "/" }
+
+    private fun findFiles(path: String): Pair<File, File>? {
+        val canonicalKey = key(path)
+        val canonicalBody = directory.resolve("$canonicalKey.body")
+        val canonicalMeta = directory.resolve("$canonicalKey.properties")
+        if (canonicalBody.isFile && canonicalMeta.isFile) {
+            return canonicalBody to canonicalMeta
+        }
+
+        return directory.listFiles { file -> file.extension == "properties" }
+            .orEmpty()
+            .firstNotNullOfOrNull { meta ->
+                val storedPath = runCatching {
+                    Properties().apply {
+                        meta.inputStream().buffered().use(::load)
+                    }.let {
+                        it.getProperty("cachePath")
+                            ?: it.getProperty("url")?.let(::cachePath)
+                    }
+                }.getOrNull()
+                val body = directory.resolve("${meta.nameWithoutExtension}.body")
+                if (storedPath == path && body.isFile) body to meta else null
+            }
+    }
+
+    private fun key(cachePath: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(cachePath.toByteArray())
         .joinToString("") { "%02x".format(it) }
 
     private companion object {
@@ -114,4 +199,3 @@ class FileResponseCache(
         )
     }
 }
-

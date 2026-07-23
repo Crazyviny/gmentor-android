@@ -1,4 +1,7 @@
 <resources>
-    <string name="app_name">Offline WebView</string>
+    <string name="app_name">GMentor-test</string>
+    <string name="show_cache">Кэш</string>
+    <string name="cache_dialog_title">Файлов: %1$d · Всего: %2$s</string>
+    <string name="cache_is_empty">Кэш пока пуст</string>
+    <string name="close">Закрыть</string>
 </resources>
-

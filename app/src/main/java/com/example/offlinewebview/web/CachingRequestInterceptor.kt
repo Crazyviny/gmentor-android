@@ -1,6 +1,5 @@
 package com.example.offlinewebview.web
 
-import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -9,15 +8,11 @@ import com.example.offlinewebview.cache.FileResponseCache
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.ByteArrayInputStream
-import java.util.Locale
 
 class CachingRequestInterceptor(
-    startUrl: String,
     private val client: OkHttpClient,
     private val cache: FileResponseCache
 ) {
-    private val allowedHost = Uri.parse(startUrl).host.orEmpty().lowercase(Locale.US)
-
     fun intercept(request: WebResourceRequest): WebResourceResponse? {
         val url = request.url.toString()
         if (!isEligible(request)) return null
@@ -48,10 +43,7 @@ class CachingRequestInterceptor(
                     return cached.toWebResourceResponse()
                 }
                 val bodyBytes = response.body.bytes()
-                val shouldStore = response.isSuccessful &&
-                    !"no-store".let { directive ->
-                        response.header("Cache-Control").orEmpty().lowercase().contains(directive)
-                    }
+                val shouldStore = response.isSuccessful
                 val stored = if (shouldStore) cache.put(url, response, bodyBytes) else null
                 stored?.toWebResourceResponse() ?: WebResourceResponse(
                     response.body.contentType()?.let { "${it.type}/${it.subtype}" },
@@ -72,7 +64,7 @@ class CachingRequestInterceptor(
     private fun isEligible(request: WebResourceRequest): Boolean =
         request.method.equals("GET", ignoreCase = true) &&
             request.url.scheme?.lowercase() in setOf("http", "https") &&
-            request.url.host?.lowercase(Locale.US) == allowedHost
+            GmentorHostPolicy.allows(request.url.host)
 
     private fun CachedResponse.toWebResourceResponse() = WebResourceResponse(
         mimeType,
@@ -92,4 +84,3 @@ class CachingRequestInterceptor(
         )
     }
 }
-
